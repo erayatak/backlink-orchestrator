@@ -1,0 +1,20 @@
+# Caddyfile for Backlink Orchestrator
+# Assumes Orchestrator runs locally on port 8080
+
+{
+    email admin@example.com
+}
+
+orchestrator.example.com {
+    # Reverse proxy to the Go backend
+    reverse_proxy 127.0.0.1:8080
+
+    # Optional: Basic rate limiting or compression
+    encode gzip zstd
+
+    # Optional: Logging
+    log {
+        output file /var/log/caddy/orchestrator.log
+        format json
+    }
+}

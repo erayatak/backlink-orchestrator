@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backlink Orchestrator</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background: #0f172a; color: #f8fafc; margin: 0; }
+        header { background: #1e293b; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; }
+        .logo { font-size: 1.25rem; font-weight: bold; color: #38bdf8; }
+        nav a { color: #94a3b8; text-decoration: none; margin-right: 1.5rem; font-weight: 500; }
+        nav a:hover, nav a.active { color: #f8fafc; }
+        .btn-logout { background: transparent; border: 1px solid #ef4444; color: #ef4444; padding: 0.5rem 1rem; border-radius: 0.25rem; cursor: pointer; }
+        .btn-logout:hover { background: #ef4444; color: white; }
+        
+        main { padding: 2rem; max-width: 1400px; margin: 0 auto; }
+        
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 0.5rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
+        .card h2 { margin-top: 0; font-size: 1.1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; margin-bottom: 1rem; }
+        
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.5rem; }
+        
+        .stat-value { font-size: 2.5rem; font-weight: bold; color: #e2e8f0; line-height: 1; }
+        .stat-label { font-size: 0.875rem; color: #94a3b8; margin-top: 0.5rem; }
+        
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 0.75rem 1rem; border-bottom: 1px solid #334155; }
+        th { color: #94a3b8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+        tr:hover { background: #334155; }
+        
+        .badge { display: inline-block; padding: 0.25rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
+        .badge-success { background: rgba(34, 197, 94, 0.2); color: #4ade80; }
+        .badge-error { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+        .badge-warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+        .badge-info { background: rgba(56, 189, 248, 0.2); color: #7dd3fc; }
+        .badge-neutral { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">Backlink Orchestrator</div>
+        <nav>
+            <a href="/" hx-get="/overview" hx-target="#content" hx-push-url="true">Overview</a>
+            <a href="/workers" hx-get="/workers/list" hx-target="#content" hx-push-url="true">Workers</a>
+            <a href="/jobs" hx-get="/jobs/list" hx-target="#content" hx-push-url="true">Jobs</a>
+            <a href="/tasks" hx-get="/tasks/list" hx-target="#content" hx-push-url="true">Tasks</a>
+        </nav>
+        <form action="/logout" method="POST" style="margin:0;">
+            <button class="btn-logout" type="submit">Logout</button>
+        </form>
+    </header>
+    
+    <main id="content">
+        {{ template "content" . }}
+    </main>
+</body>
+</html>

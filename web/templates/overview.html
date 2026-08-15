@@ -1,0 +1,32 @@
+{{ define "content" }}
+<div hx-get="/api/dashboard/stats" hx-trigger="every 5s" hx-swap="outerHTML">
+    <!-- Initial Load Skeleton -->
+    <div class="grid-3">
+        <div class="card">
+            <h2>Workers</h2>
+            <div class="grid-3" style="gap:0.5rem; text-align:center;">
+                <div><div class="stat-value">{{.TotalWorkers}}</div><div class="stat-label">Total</div></div>
+                <div><div class="stat-value" style="color:#4ade80;">{{.OnlineWorkers}}</div><div class="stat-label">Online</div></div>
+                <div><div class="stat-value" style="color:#ef4444;">{{.OfflineWorkers}}</div><div class="stat-label">Offline</div></div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Tasks Queue</h2>
+            <div class="grid-4" style="gap:0.5rem; text-align:center;">
+                <div><div class="stat-value">{{.QueuedTasks}}</div><div class="stat-label">Queued</div></div>
+                <div><div class="stat-value" style="color:#38bdf8;">{{.RunningTasks}}</div><div class="stat-label">Running</div></div>
+                <div><div class="stat-value" style="color:#4ade80;">{{.SucceededTasks}}</div><div class="stat-label">Succeeded</div></div>
+                <div><div class="stat-value" style="color:#ef4444;">{{.FailedTasks}}</div><div class="stat-label">Failed</div></div>
+            </div>
+        </div>
+        <div class="card">
+            <h2>Jobs</h2>
+            <div class="grid-3" style="gap:0.5rem; text-align:center;">
+                <div><div class="stat-value">{{.ActiveJobs}}</div><div class="stat-label">Active</div></div>
+                <div><div class="stat-value" style="color:#4ade80;">{{.CompletedJobs}}</div><div class="stat-label">Completed</div></div>
+                <div><div class="stat-value" style="color:#ef4444;">{{.FailedJobs}}</div><div class="stat-label">Failed</div></div>
+            </div>
+        </div>
+    </div>
+</div>
+{{ end }}

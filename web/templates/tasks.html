@@ -1,0 +1,35 @@
+{{ define "content" }}
+<div class="card" hx-get="/tasks/list/data" hx-trigger="every 10s" hx-swap="outerHTML">
+    <h2>Tasks Queue (Latest 50)</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Job</th>
+                <th>Task ID</th>
+                <th>Status</th>
+                <th>Source</th>
+                <th>Worker</th>
+                <th>Attempts</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ range .Tasks }}
+            <tr>
+                <td style="font-family: monospace; font-size: 0.85em;">{{ .JobID }}</td>
+                <td style="font-family: monospace; font-size: 0.85em;">{{ .TaskID }}</td>
+                <td>
+                    <span class="badge {{ if eq .Status "QUEUED" }}badge-neutral{{ else if eq .Status "RUNNING" }}badge-info{{ else if eq .Status "LEASED" }}badge-info{{ else if eq .Status "SUCCEEDED" }}badge-success{{ else if eq .Status "FAILED" }}badge-error{{ else if eq .Status "RETRY_WAIT" }}badge-warning{{ end }}">
+                        {{ .Status }}
+                    </span>
+                </td>
+                <td style="font-family: monospace; font-size: 0.85em;">{{ .SourcePath }}</td>
+                <td style="font-family: monospace; font-size: 0.85em;">{{ if .AssignedWorkerID }}{{ .AssignedWorkerID }}{{ else }}-{{ end }}</td>
+                <td>{{ .CurrentAttempt }}</td>
+            </tr>
+            {{ else }}
+            <tr><td colspan="6" style="text-align: center; color: #94a3b8;">No tasks in queue.</td></tr>
+            {{ end }}
+        </tbody>
+    </table>
+</div>
+{{ end }}

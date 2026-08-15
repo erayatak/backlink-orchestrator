@@ -1,0 +1,37 @@
+{{ define "content" }}
+<div class="card" hx-get="/workers/list/data" hx-trigger="every 10s" hx-swap="outerHTML">
+    <h2>Workers Directory</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Status</th>
+                <th>Host</th>
+                <th>CPU/RAM</th>
+                <th>Last Heartbeat</th>
+                <th>Current Task</th>
+                <th>Processed</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ range .Workers }}
+            <tr>
+                <td style="font-family: monospace; font-size: 0.85em;">{{ .WorkerID }}</td>
+                <td>
+                    <span class="badge {{ if eq .Status "READY" }}badge-info{{ else if eq .Status "BUSY" }}badge-success{{ else if eq .Status "OFFLINE" }}badge-error{{ else }}badge-neutral{{ end }}">
+                        {{ .Status }}
+                    </span>
+                </td>
+                <td>{{ .Hostname }}<br><small style="color:#94a3b8;">{{ .Version }}</small></td>
+                <td>{{ .CpuCount }} cores / {{ .MemoryMb }} MB</td>
+                <td>{{ .LastHeartbeatAt.Format "15:04:05" }}</td>
+                <td style="font-family: monospace; font-size: 0.85em;">{{ if .CurrentTaskID }}{{ .CurrentTaskID }}{{ else }}-{{ end }}</td>
+                <td>-</td>
+            </tr>
+            {{ else }}
+            <tr><td colspan="7" style="text-align: center; color: #94a3b8;">No workers registered yet.</td></tr>
+            {{ end }}
+        </tbody>
+    </table>
+</div>
+{{ end }}

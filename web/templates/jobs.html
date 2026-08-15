@@ -1,0 +1,50 @@
+{{ define "content" }}
+<div class="card" hx-get="/jobs/list/data" hx-trigger="every 10s" hx-swap="outerHTML">
+    <h2>Jobs</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Job ID</th>
+                <th>Dataset</th>
+                <th>Status</th>
+                <th>Tasks (Done/Total)</th>
+                <th>Failed</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ range .Jobs }}
+            <tr>
+                <td style="font-family: monospace; font-size: 0.85em;">{{ .JobID }}</td>
+                <td>{{ .Dataset }}<br><small style="color:#94a3b8;">{{ .CrawlID }}</small></td>
+                <td>
+                    <span class="badge {{ if eq .Status "CREATED" }}badge-neutral{{ else if eq .Status "RUNNING" }}badge-info{{ else if eq .Status "PAUSED" }}badge-warning{{ else if eq .Status "COMPLETED" }}badge-success{{ else if eq .Status "FAILED" }}badge-error{{ else if eq .Status "CANCELLED" }}badge-error{{ else }}badge-neutral{{ end }}">
+                        {{ .Status }}
+                    </span>
+                </td>
+                <td>
+                    <div style="background: #334155; border-radius: 9999px; width: 100%; height: 8px; margin-bottom: 4px; overflow: hidden;">
+                        <div style="background: #4ade80; height: 100%; width: {{ if gt .TotalTasks 0 }}{{ printf "%.0f" (call $.Percent .SucceededTasks .TotalTasks) }}{{ else }}0{{ end }}%;"></div>
+                    </div>
+                    <small>{{ .SucceededTasks }} / {{ .TotalTasks }}</small>
+                </td>
+                <td style="color:#ef4444;">{{ .FailedTasks }}</td>
+                <td>
+                    <!-- Admin Actions -->
+                    {{ if eq .Status "RUNNING" }}
+                    <button hx-post="/api/v1/admin/jobs/{{.JobID}}/pause" hx-swap="none" style="background:#f59e0b; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">Pause</button>
+                    {{ else if eq .Status "PAUSED" }}
+                    <button hx-post="/api/v1/admin/jobs/{{.JobID}}/resume" hx-swap="none" style="background:#10b981; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">Resume</button>
+                    {{ end }}
+                    {{ if not (eq .Status "COMPLETED") }}{{ if not (eq .Status "CANCELLED") }}
+                    <button hx-post="/api/v1/admin/jobs/{{.JobID}}/cancel" hx-swap="none" style="background:#ef4444; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">Cancel</button>
+                    {{ end }}{{ end }}
+                </td>
+            </tr>
+            {{ else }}
+            <tr><td colspan="6" style="text-align: center; color: #94a3b8;">No jobs found.</td></tr>
+            {{ end }}
+        </tbody>
+    </table>
+</div>
+{{ end }}
