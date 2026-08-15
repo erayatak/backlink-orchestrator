@@ -1,6 +1,7 @@
 [Unit]
 Description=Backlink Orchestrator Service
 After=network.target postgresql.service
+Requires=postgresql.service
 
 [Service]
 Type=simple
@@ -12,7 +13,7 @@ WorkingDirectory=/opt/backlink-orchestrator
 EnvironmentFile=/opt/backlink-orchestrator/.env
 
 # The main executable
-ExecStart=/opt/backlink-orchestrator/orchestrator
+ExecStart=/opt/backlink-orchestrator/bin/orchestrator server
 
 # Graceful shutdown using SIGTERM, give it up to 30s
 KillSignal=SIGTERM
@@ -26,6 +27,7 @@ RestartSec=5
 ProtectSystem=full
 ProtectHome=true
 NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
