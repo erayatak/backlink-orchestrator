@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Backlink Orchestrator Single-Command Installer
-# Usage: curl -fsSL https://<domain>/install.sh | sudo ORCHESTRATOR_DOMAIN=example.com bash
+#
+# Usage:
+# curl -fsSL https://raw.githubusercontent.com/erayatak/backlink-orchestrator/main/deploy/bootstrap.sh | sudo bash -s -- --domain example.com
 
 set -Eeuo pipefail
 
@@ -17,14 +19,28 @@ cleanup() {
 
 echo -e "\e[34m[INFO] Starting Backlink Orchestrator installation...\e[0m"
 
-# 1. Check Root
+# 1. Parse Arguments
+DOMAIN="${ORCHESTRATOR_DOMAIN:-}"
+FORCE_RESET=0
+COMMIT_REF="main"
+
+while [[ "$#" -gt 0 ]]; do
+  case $1 in
+      --domain) DOMAIN="$2"; shift ;;
+      --force-reset) FORCE_RESET=1 ;;
+      --ref) COMMIT_REF="$2"; shift ;;
+  esac
+  shift
+done
+
+# 2. Check Root
 if [ "$EUID" -ne 0 ]; then
-  echo -e "\e[31m[ERROR] Please run as root (e.g. sudo bash install.sh)\e[0m"
+  echo -e "\e[31m[ERROR] Please run as root (e.g. sudo bash bootstrap.sh)\e[0m"
   exit 1
 fi
 
-# 2. Check OS & Arch
-if ! grep -qi "Ubuntu\|Debian" /etc/os-release; then
+# 3. Check OS & Arch
+if ! grep -qi "Ubuntu\|Debian" /etc/os-release 2>/dev/null; then
   echo -e "\e[31m[ERROR] This script requires Ubuntu/Debian.\e[0m"
   exit 1
 fi
@@ -35,66 +51,87 @@ if [ "$ARCH" != "x86_64" ]; then
   exit 1
 fi
 
-# Get Domain
-DOMAIN="${ORCHESTRATOR_DOMAIN:-}"
-while [[ "$#" -gt 0 ]]; do
-  case $1 in
-      --domain) DOMAIN="$2"; shift ;;
-  esac
-  shift
-done
-
 if [ -z "$DOMAIN" ]; then
   echo -e "\e[31m[ERROR] Domain is required. Please set ORCHESTRATOR_DOMAIN or use --domain.\e[0m"
   exit 1
 fi
 
-# 3. Install Dependencies
+INSTALL_DIR="/opt/backlink-orchestrator"
+
+# Handle --force-reset
+if [ "$FORCE_RESET" -eq 1 ]; then
+  echo -e "\e[31m[WARN] Force reset initiated. Destroying existing configuration...\e[0m"
+  rm -f "$INSTALL_DIR/.env"
+fi
+
+# Load existing .env if present (Idempotency)
+if [ -f "$INSTALL_DIR/.env" ]; then
+  echo -e "\e[34m[INFO] Existing installation found. Preserving credentials...\e[0m"
+  set -a
+  source "$INSTALL_DIR/.env"
+  set +a
+  IS_RERUN=1
+else
+  echo -e "\e[34m[INFO] Fresh installation mode.\e[0m"
+  IS_RERUN=0
+fi
+
+# 4. Install Dependencies
 echo -e "\e[34m[INFO] Installing dependencies...\e[0m"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y curl wget git build-essential openssl sudo ufw lsb-release ca-certificates apt-transport-https debian-keyring debian-archive-keyring
+apt-get install -y curl wget git build-essential openssl sudo ufw lsb-release ca-certificates apt-transport-https debian-keyring debian-archive-keyring postgresql postgresql-contrib
 
-# 4. Install Go
-# The user specified Go 1.25.7, but this might not exist yet. We will try 1.24+ if 1.25.7 fails.
-GO_VERSION="1.24.0" # Fallback safely to known good version for orchestration
-echo -e "\e[34m[INFO] Verifying/Installing Go...\e[0m"
-if ! command -v go &> /dev/null; then
-  echo -e "\e[34m[INFO] Go not found, installing $GO_VERSION...\e[0m"
-  wget -q https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz -O /tmp/go.tar.gz
+# 5. Install Go
+GO_VERSION="1.25.7"
+echo -e "\e[34m[INFO] Verifying/Installing Go $GO_VERSION...\e[0m"
+if command -v go &> /dev/null && go version | grep -q "$GO_VERSION"; then
+  echo -e "\e[34m[INFO] Go $GO_VERSION is already installed.\e[0m"
+else
+  echo -e "\e[34m[INFO] Installing Go $GO_VERSION...\e[0m"
+  wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz || {
+      echo -e "\e[31m[ERROR] Failed to download Go $GO_VERSION. Verify version exists.\e[0m"
+      exit 1
+  }
   rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tar.gz
   rm /tmp/go.tar.gz
   export PATH=$PATH:/usr/local/go/bin
   echo 'export PATH=$PATH:/usr/local/go/bin' > /etc/profile.d/go.sh
-else
-  echo -e "\e[34m[INFO] Go is already installed: $(go version)\e[0m"
 fi
 
-# 5. Install PostgreSQL
-echo -e "\e[34m[INFO] Installing PostgreSQL...\e[0m"
-apt-get install -y postgresql postgresql-contrib
+if ! command -v go &> /dev/null; then
+  export PATH=$PATH:/usr/local/go/bin
+fi
 
-# Ensure PostgreSQL is running
+# 6. Database Provisioning
+echo -e "\e[34m[INFO] Provisioning database...\e[0m"
 systemctl enable postgresql
 systemctl start postgresql
 
-# Wait for DB to be ready
 until sudo -u postgres psql -c '\q' 2>/dev/null; do
   echo "Waiting for PostgreSQL..."
   sleep 2
 done
 
-# 6. Database Provisioning
-echo -e "\e[34m[INFO] Provisioning database...\e[0m"
 DB_NAME="backlink_orchestrator"
 DB_USER="backlink_orchestrator"
-DB_PASSWORD=$(openssl rand -hex 24)
 
-# Create User and Database if not exists
-sudo -u postgres psql -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$DB_USER') THEN CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD'; END IF; END \$\$;"
-sudo -u postgres psql -c "SELECT 'CREATE DATABASE $DB_NAME OWNER $DB_USER' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DB_NAME')\gexec"
+# Idempotent Role Creation
+if sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1; then
+  echo -e "\e[34m[INFO] PostgreSQL role '$DB_USER' already exists. Password unchanged.\e[0m"
+else
+  echo -e "\e[34m[INFO] Creating PostgreSQL role '$DB_USER'...\e[0m"
+  NEW_DB_PASSWORD=$(openssl rand -hex 24)
+  sudo -u postgres psql -c "CREATE ROLE $DB_USER LOGIN PASSWORD '$NEW_DB_PASSWORD';"
+  export DATABASE_URL="postgres://${DB_USER}:${NEW_DB_PASSWORD}@localhost:5432/${DB_NAME}?sslmode=disable"
+fi
 
-DATABASE_URL="postgres://${DB_USER}:${DB_PASSWORD}@localhost:5432/${DB_NAME}?sslmode=disable"
+if sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='$DB_NAME'" | grep -q 1; then
+  echo -e "\e[34m[INFO] PostgreSQL database '$DB_NAME' already exists.\e[0m"
+else
+  echo -e "\e[34m[INFO] Creating PostgreSQL database '$DB_NAME'...\e[0m"
+  sudo -u postgres psql -c "CREATE DATABASE $DB_NAME OWNER $DB_USER;"
+fi
 
 # 7. OS User & Directory Setup
 echo -e "\e[34m[INFO] Setting up OS user and directories...\e[0m"
@@ -102,38 +139,30 @@ if ! id "orchestrator" &>/dev/null; then
   useradd -m -s /bin/bash orchestrator
 fi
 
-INSTALL_DIR="/opt/backlink-orchestrator"
-mkdir -p "$INSTALL_DIR"
-mkdir -p "$INSTALL_DIR/bin"
-mkdir -p "$INSTALL_DIR/logs"
+mkdir -p "$INSTALL_DIR/bin" "$INSTALL_DIR/logs"
 
 # 8. Clone & Build
-echo -e "\e[34m[INFO] Cloning and building the repository...\e[0m"
-# In a real scenario, this fetches from the public repo:
-# git clone https://github.com/erayatak/backlink-orchestrator.git /tmp/orchestrator-build
-# For this script to work if run locally inside the existing dir, we copy the current dir or clone.
-if [ -d ".git" ] && [ -f "go.mod" ]; then
-  cp -r . /tmp/orchestrator-build
-else
-  git clone https://github.com/erayatak/backlink-orchestrator.git /tmp/orchestrator-build
-fi
+echo -e "\e[34m[INFO] Cloning repository ($COMMIT_REF)...\e[0m"
+rm -rf /tmp/orchestrator-build
+git clone -b "$COMMIT_REF" https://github.com/erayatak/backlink-orchestrator.git /tmp/orchestrator-build
 
 cd /tmp/orchestrator-build
-/usr/local/go/bin/go build -o "$INSTALL_DIR/bin/orchestrator" ./cmd/orchestrator
+CURRENT_SHA=$(git rev-parse HEAD)
+echo -e "\e[34m[INFO] Building from commit: $CURRENT_SHA\e[0m"
 
-# Copy deployment files
+go build -o "$INSTALL_DIR/bin/orchestrator" ./cmd/orchestrator
 cp -r deploy "$INSTALL_DIR/"
 cd /
 
 # 9. Secret & Environment Provisioning
-echo -e "\e[34m[INFO] Generating secrets and environment...\e[0m"
-SESSION_SECRET=$(openssl rand -hex 32)
-ADMIN_PLAINTEXT_PASS=$(openssl rand -hex 12)
+echo -e "\e[34m[INFO] Configuring environment...\e[0m"
 
-# Generate Argon2id hash using our built binary
-ADMIN_PASSWORD_HASH=$($INSTALL_DIR/bin/orchestrator admin password-hash "$ADMIN_PLAINTEXT_PASS")
+if [ "$IS_RERUN" -eq 0 ] || [ "$FORCE_RESET" -eq 1 ]; then
+  SESSION_SECRET=$(openssl rand -hex 32)
+  ADMIN_PLAINTEXT_PASS=$(openssl rand -hex 12)
+  ADMIN_PASSWORD_HASH=$("$INSTALL_DIR/bin/orchestrator" admin password-hash "$ADMIN_PLAINTEXT_PASS")
 
-cat > "$INSTALL_DIR/.env" <<EOF
+  cat > "$INSTALL_DIR/.env" <<EOF
 APP_ENV=production
 APP_PORT=8080
 PUBLIC_BASE_URL=https://$DOMAIN
@@ -142,13 +171,21 @@ SESSION_SECRET=$SESSION_SECRET
 ADMIN_PASSWORD_HASH=$ADMIN_PASSWORD_HASH
 ORCHESTRATOR_DOMAIN=$DOMAIN
 EOF
-
-chown -R orchestrator:orchestrator "$INSTALL_DIR"
-chmod 600 "$INSTALL_DIR/.env"
+  chown -R orchestrator:orchestrator "$INSTALL_DIR"
+  chmod 600 "$INSTALL_DIR/.env"
+  echo -e "\e[32m[SUCCESS] New credentials generated.\e[0m"
+else
+  echo -e "\e[34m[INFO] Using existing .env secrets.\e[0m"
+  sed -i "s/^ORCHESTRATOR_DOMAIN=.*/ORCHESTRATOR_DOMAIN=$DOMAIN/" "$INSTALL_DIR/.env"
+  sed -i "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=https://$DOMAIN|" "$INSTALL_DIR/.env"
+fi
 
 # 10. Run Migrations
 echo -e "\e[34m[INFO] Running database migrations...\e[0m"
-sudo -u orchestrator bash -c "cd $INSTALL_DIR && ./bin/orchestrator migrate"
+if ! sudo -u orchestrator bash -c "cd $INSTALL_DIR && ./bin/orchestrator migrate"; then
+  echo -e "\e[31m[ERROR] Database migrations failed.\e[0m"
+  exit 1
+fi
 
 # 11. Install Caddy
 echo -e "\e[34m[INFO] Installing and configuring Caddy...\e[0m"
@@ -159,50 +196,65 @@ if ! command -v caddy &> /dev/null; then
   apt-get install -y caddy
 fi
 
-# Prepare Caddyfile
 cp "$INSTALL_DIR/deploy/Caddyfile" /etc/caddy/Caddyfile
-# Substitute domain using env vars in Caddyfile natively or via sed
 sed -i "s/{\$ORCHESTRATOR_DOMAIN}/$DOMAIN/g" /etc/caddy/Caddyfile
-
 systemctl restart caddy
 systemctl enable caddy
 
 # 12. Setup Systemd
-echo -e "\e[34m[INFO] Installing systemd service...\e[0m"
+echo -e "\e[34m[INFO] Configuring systemd...\e[0m"
 cp "$INSTALL_DIR/deploy/orchestrator.service" /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable orchestrator
-systemctl start orchestrator
+systemctl restart orchestrator
 
-# 13. Health Verification & Smoke Test
-echo -e "\e[34m[INFO] Verifying installation...\e[0m"
-sleep 5 # wait for service to bind
+# 13. Health Verification Polling
+echo -e "\e[34m[INFO] Verifying health checks (timeout 60s)...\e[0m"
+HEALTH_LIVE=0
+HEALTH_READY=0
 
-if ! curl -fsSL "http://localhost:8080/health/live" | grep -q "OK"; then
-  echo -e "\e[31m[ERROR] Health check (/health/live) failed.\e[0m"
+for i in {1..12}; do
+  if curl -fsSL "http://localhost:8080/health/live" | grep -q "OK" 2>/dev/null; then
+    HEALTH_LIVE=1
+  fi
+  if curl -fsSL "http://localhost:8080/health/ready" | grep -q "Ready" 2>/dev/null; then
+    HEALTH_READY=1
+  fi
+
+  if [ "$HEALTH_LIVE" -eq 1 ] && [ "$HEALTH_READY" -eq 1 ]; then
+    break
+  fi
+  sleep 5
+done
+
+if [ "$HEALTH_LIVE" -eq 0 ] || [ "$HEALTH_READY" -eq 0 ]; then
+  echo -e "\e[31m[ERROR] Orchestrator failed to become healthy.\e[0m"
   systemctl status orchestrator --no-pager
   exit 1
 fi
 
-if ! curl -fsSL "http://localhost:8080/health/ready" | grep -q "Ready"; then
-  echo -e "\e[31m[ERROR] Readiness check (/health/ready) failed.\e[0m"
-  systemctl status orchestrator --no-pager
-  exit 1
-fi
+# 14. Comprehensive Final Check
+echo -e "\e[34m[INFO] Performing comprehensive checks...\e[0m"
+systemctl is-active --quiet postgresql || { echo -e "\e[31m[ERROR] PostgreSQL not active.\e[0m"; exit 1; }
+systemctl is-active --quiet caddy || { echo -e "\e[31m[ERROR] Caddy not active.\e[0m"; exit 1; }
+systemctl is-active --quiet orchestrator || { echo -e "\e[31m[ERROR] Orchestrator not active.\e[0m"; exit 1; }
 
 echo -e "\e[32m[SUCCESS] Orchestrator installation complete.\e[0m"
 echo "--------------------------------------------------------"
-echo "Admin Dashboard: https://$DOMAIN"
-echo "Admin Username : admin"
-echo "Admin Password : $ADMIN_PLAINTEXT_PASS"
-echo "--------------------------------------------------------"
+if [ "$IS_RERUN" -eq 0 ]; then
+  echo "Admin Dashboard: https://$DOMAIN"
+  echo "Admin Username : admin"
+  echo "Admin Password : $ADMIN_PLAINTEXT_PASS"
+  echo "--------------------------------------------------------"
+  echo -e "\e[34m[INFO] Generating first Bootstrap Token for Workers...\e[0m"
+  sudo -u orchestrator bash -c "cd $INSTALL_DIR && ./bin/orchestrator admin bootstrap-token create"
+  echo "--------------------------------------------------------"
+  echo "IMPORTANT: Save the admin password and bootstrap token."
+  echo "They will not be shown again."
+else
+  echo "Admin Dashboard: https://$DOMAIN"
+  echo "Existing credentials and tokens have been preserved."
+  echo "--------------------------------------------------------"
+fi
 
-# 14. Generate Bootstrap Token
-echo -e "\e[34m[INFO] Generating first Bootstrap Token for Workers...\e[0m"
-sudo -u orchestrator bash -c "cd $INSTALL_DIR && ./bin/orchestrator admin bootstrap-token create"
-echo "--------------------------------------------------------"
-echo "IMPORTANT: Save the admin password and bootstrap token."
-echo "They will not be shown again."
-
-# Cleanup build
 rm -rf /tmp/orchestrator-build

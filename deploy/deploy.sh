@@ -39,20 +39,52 @@ chmod +x "$TARGET_BIN"
 echo -e "\e[34m[INFO] Restarting orchestrator service...\e[0m"
 systemctl restart orchestrator
 
-# 5. Health Verification
-echo -e "\e[34m[INFO] Waiting for service to come up...\e[0m"
-sleep 5
+# 5. Health Verification Polling
+echo -e "\e[34m[INFO] Waiting for service to come up (timeout 60s)...\e[0m"
+HEALTH_LIVE=0
+HEALTH_READY=0
 
-if ! curl -fsSL "http://localhost:8080/health/live" | grep -q "OK"; then
+for i in {1..12}; do
+    if curl -fsSL "http://localhost:8080/health/live" | grep -q "OK" 2>/dev/null; then
+        HEALTH_LIVE=1
+    fi
+    if curl -fsSL "http://localhost:8080/health/ready" | grep -q "Ready" 2>/dev/null; then
+        HEALTH_READY=1
+    fi
+
+    if [ "$HEALTH_LIVE" -eq 1 ] && [ "$HEALTH_READY" -eq 1 ]; then
+        break
+    fi
+    sleep 5
+done
+
+if [ "$HEALTH_LIVE" -eq 0 ] || [ "$HEALTH_READY" -eq 0 ]; then
     echo -e "\e[31m[ERROR] Health check failed after deployment! Rolling back...\e[0m"
     if [ -f "$BACKUP_BIN" ]; then
         mv "$BACKUP_BIN" "$TARGET_BIN"
         systemctl restart orchestrator
-        echo -e "\e[33m[WARN] Rollback complete. Previous version restored.\e[0m"
+        
+        echo -e "\e[34m[INFO] Rollback initiated. Verifying rollback health (timeout 30s)...\e[0m"
+        RB_HEALTH_LIVE=0
+        RB_HEALTH_READY=0
+        for i in {1..6}; do
+            if curl -fsSL "http://localhost:8080/health/live" | grep -q "OK" 2>/dev/null; then RB_HEALTH_LIVE=1; fi
+            if curl -fsSL "http://localhost:8080/health/ready" | grep -q "Ready" 2>/dev/null; then RB_HEALTH_READY=1; fi
+            if [ "$RB_HEALTH_LIVE" -eq 1 ] && [ "$RB_HEALTH_READY" -eq 1 ]; then break; fi
+            sleep 5
+        done
+
+        if [ "$RB_HEALTH_LIVE" -eq 0 ] || [ "$RB_HEALTH_READY" -eq 0 ]; then
+            echo -e "\e[31m[ERROR] Rollback failed to become healthy. Manual intervention required.\e[0m"
+            exit 1
+        else
+            echo -e "\e[33m[WARN] Rollback complete and healthy. Previous version restored.\e[0m"
+            exit 1
+        fi
     else
         echo -e "\e[31m[ERROR] No backup binary found for rollback.\e[0m"
+        exit 1
     fi
-    exit 1
 fi
 
 echo -e "\e[32m[SUCCESS] Deployment complete and health verified.\e[0m"
