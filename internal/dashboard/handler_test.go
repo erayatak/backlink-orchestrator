@@ -22,7 +22,7 @@ func setupTestDB(t *testing.T) *database.DB {
 	if dbURL == "" {
 		dbURL = "postgres://postgres@localhost:5432/testdb?sslmode=disable"
 	}
-	
+
 	schemaName := "dashboard_test"
 	if strings.Contains(dbURL, "?") {
 		dbURL = dbURL + "&search_path=" + schemaName
