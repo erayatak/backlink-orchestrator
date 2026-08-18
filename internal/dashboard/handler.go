@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -116,7 +117,7 @@ func (h *Handler) LogoutPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
-	h.tmpl.ExecuteTemplate(w, "layout.html", nil)
+	h.tmpl.ExecuteTemplate(w, "layout.html", "/overview")
 }
 
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +164,7 @@ func (h *Handler) Workers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Full page load via index which fetches via hx-get
-	h.tmpl.ExecuteTemplate(w, "layout.html", nil)
+	h.tmpl.ExecuteTemplate(w, "layout.html", "/workers")
 }
 
 func (h *Handler) WorkersData(w http.ResponseWriter, r *http.Request) {
@@ -172,7 +173,8 @@ func (h *Handler) WorkersData(w http.ResponseWriter, r *http.Request) {
 		FROM workers ORDER BY last_heartbeat_at DESC LIMIT 50
 	`)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("Failed to query workers", "error", err.Error())
+		http.Error(w, "Internal server error querying workers", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -190,9 +192,29 @@ func (h *Handler) WorkersData(w http.ResponseWriter, r *http.Request) {
 
 	var workers []WorkerRow
 	for rows.Next() {
-		var w WorkerRow
-		_ = rows.Scan(&w.WorkerID, &w.Status, &w.Hostname, &w.Version, &w.CpuCount, &w.MemoryMb, &w.CurrentTaskID, &w.LastHeartbeatAt)
-		workers = append(workers, w)
+		var row WorkerRow
+		err := rows.Scan(
+			&row.WorkerID,
+			&row.Status,
+			&row.Hostname,
+			&row.Version,
+			&row.CpuCount,
+			&row.MemoryMb,
+			&row.CurrentTaskID,
+			&row.LastHeartbeatAt,
+		)
+		if err != nil {
+			slog.Error("Failed to scan worker row", "error", err.Error())
+			http.Error(w, "Internal server error scanning worker row", http.StatusInternalServerError)
+			return
+		}
+		workers = append(workers, row)
+	}
+
+	if err := rows.Err(); err != nil {
+		slog.Error("Rows iteration error in workers", "error", err.Error())
+		http.Error(w, "Internal server error reading workers", http.StatusInternalServerError)
+		return
 	}
 
 	h.tmpl.ExecuteTemplate(w, "workers.html", map[string]interface{}{"Workers": workers})
@@ -203,7 +225,7 @@ func (h *Handler) Tasks(w http.ResponseWriter, r *http.Request) {
 		h.TasksData(w, r)
 		return
 	}
-	h.tmpl.ExecuteTemplate(w, "layout.html", nil)
+	h.tmpl.ExecuteTemplate(w, "layout.html", "/tasks")
 }
 
 func (h *Handler) TasksData(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +236,8 @@ func (h *Handler) TasksData(w http.ResponseWriter, r *http.Request) {
 		ORDER BY t.created_at DESC LIMIT 50
 	`)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("Failed to query tasks", "error", err.Error())
+		http.Error(w, "Internal server error querying tasks", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -231,8 +254,26 @@ func (h *Handler) TasksData(w http.ResponseWriter, r *http.Request) {
 	var tasks []TaskRow
 	for rows.Next() {
 		var t TaskRow
-		_ = rows.Scan(&t.TaskID, &t.JobID, &t.Status, &t.SourcePath, &t.AssignedWorkerID, &t.CurrentAttempt)
+		err := rows.Scan(
+			&t.TaskID,
+			&t.JobID,
+			&t.Status,
+			&t.SourcePath,
+			&t.AssignedWorkerID,
+			&t.CurrentAttempt,
+		)
+		if err != nil {
+			slog.Error("Failed to scan task row", "error", err.Error())
+			http.Error(w, "Internal server error scanning task row", http.StatusInternalServerError)
+			return
+		}
 		tasks = append(tasks, t)
+	}
+
+	if err := rows.Err(); err != nil {
+		slog.Error("Rows iteration error in tasks", "error", err.Error())
+		http.Error(w, "Internal server error reading tasks", http.StatusInternalServerError)
+		return
 	}
 
 	h.tmpl.ExecuteTemplate(w, "tasks.html", map[string]interface{}{"Tasks": tasks})
@@ -243,7 +284,7 @@ func (h *Handler) Jobs(w http.ResponseWriter, r *http.Request) {
 		h.JobsData(w, r)
 		return
 	}
-	h.tmpl.ExecuteTemplate(w, "layout.html", nil)
+	h.tmpl.ExecuteTemplate(w, "layout.html", "/jobs")
 }
 
 func (h *Handler) JobsData(w http.ResponseWriter, r *http.Request) {
@@ -252,7 +293,8 @@ func (h *Handler) JobsData(w http.ResponseWriter, r *http.Request) {
 		FROM jobs ORDER BY created_at DESC LIMIT 50
 	`)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("Failed to query jobs", "error", err.Error())
+		http.Error(w, "Internal server error querying jobs", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
@@ -270,8 +312,27 @@ func (h *Handler) JobsData(w http.ResponseWriter, r *http.Request) {
 	var jobs []JobRow
 	for rows.Next() {
 		var j JobRow
-		_ = rows.Scan(&j.JobID, &j.Dataset, &j.CrawlID, &j.Status, &j.TotalTasks, &j.SucceededTasks, &j.FailedTasks)
+		err := rows.Scan(
+			&j.JobID,
+			&j.Dataset,
+			&j.CrawlID,
+			&j.Status,
+			&j.TotalTasks,
+			&j.SucceededTasks,
+			&j.FailedTasks,
+		)
+		if err != nil {
+			slog.Error("Failed to scan job row", "error", err.Error())
+			http.Error(w, "Internal server error scanning job row", http.StatusInternalServerError)
+			return
+		}
 		jobs = append(jobs, j)
+	}
+
+	if err := rows.Err(); err != nil {
+		slog.Error("Rows iteration error in jobs", "error", err.Error())
+		http.Error(w, "Internal server error reading jobs", http.StatusInternalServerError)
+		return
 	}
 
 	h.tmpl.ExecuteTemplate(w, "jobs.html", map[string]interface{}{"Jobs": jobs})

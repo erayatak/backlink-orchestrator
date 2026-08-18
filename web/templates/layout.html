@@ -43,17 +43,16 @@
         <div class="logo">Backlink Orchestrator</div>
         <nav>
             <a href="/" hx-get="/overview" hx-target="#content" hx-push-url="true">Overview</a>
-            <a href="/workers" hx-get="/workers/list" hx-target="#content" hx-push-url="true">Workers</a>
-            <a href="/jobs" hx-get="/jobs/list" hx-target="#content" hx-push-url="true">Jobs</a>
-            <a href="/tasks" hx-get="/tasks/list" hx-target="#content" hx-push-url="true">Tasks</a>
+            <a href="/workers" hx-get="/workers" hx-target="#content" hx-push-url="true">Workers</a>
+            <a href="/jobs" hx-get="/jobs" hx-target="#content" hx-push-url="true">Jobs</a>
+            <a href="/tasks" hx-get="/tasks" hx-target="#content" hx-push-url="true">Tasks</a>
         </nav>
         <form action="/logout" method="POST" style="margin:0;">
             <button class="btn-logout" type="submit">Logout</button>
         </form>
     </header>
     
-    <main id="content">
-        {{ template "content" . }}
+    <main id="content" hx-get="{{ . }}" hx-trigger="load">
     </main>
 </body>
 </html>

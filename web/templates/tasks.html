@@ -1,4 +1,3 @@
-{{ define "content" }}
 <div class="card" hx-get="/tasks/list/data" hx-trigger="every 10s" hx-swap="outerHTML">
     <h2>Tasks Queue (Latest 50)</h2>
     <table>
@@ -32,4 +31,3 @@
         </tbody>
     </table>
 </div>
-{{ end }}
