@@ -41,7 +41,7 @@ func TestHealthAndAdmin(t *testing.T) {
 	mux.HandleFunc("GET /metrics", promhttp.Handler().ServeHTTP)
 
 	// Dashboard Auth
-	dashHandler := dashboard.NewHandler(db, cfg)
+	dashHandler := dashboard.NewHandler(db, cfg, nil)
 	mux.HandleFunc("GET /login", dashHandler.LoginGet)
 
 	authMux := http.NewServeMux()

@@ -1,0 +1,51 @@
+<div class="card" hx-get="/crawls/list/data" hx-trigger="every 10s" hx-swap="outerHTML">
+    <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 0.5rem; margin-bottom: 1rem;">
+        <h2 style="border-bottom: none; margin-bottom: 0; padding-bottom: 0;">COMMON CRAWL CATALOG</h2>
+        <button style="background: transparent; border: 1px solid #38bdf8; color: #38bdf8; padding: 0.5rem 1rem; border-radius: 0.25rem; cursor: pointer;"
+                hx-post="/crawls/sync" hx-swap="none" onclick="this.innerText='Syncing...'">
+            Sync Catalog
+        </button>
+    </div>
+    
+    {{ if .Crawls }}
+    <table>
+        <thead>
+            <tr>
+                <th>Crawl ID</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>WAT Manifest</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {{ range .Crawls }}
+            <tr>
+                <td>{{ .ID }}</td>
+                <td>{{ .Name }}</td>
+                <td><span class="badge badge-success">DISCOVERED</span></td>
+                <td>
+                    {{ if .HasWATPaths }}
+                        <span class="badge badge-success">READY</span>
+                    {{ else }}
+                        <span class="badge badge-warning">PENDING</span>
+                    {{ end }}
+                </td>
+                <td>
+                    {{ if .HasWATPaths }}
+                    <form style="display: inline-block; margin: 0;" hx-post="/api/v1/admin/crawls/{{ .ID }}/scan" hx-swap="none">
+                        <input type="hidden" name="pipeline_version" value="backlink-v1">
+                        <button type="submit" style="background: #0ea5e9; color: white; border: none; padding: 0.25rem 0.75rem; border-radius: 0.25rem; cursor: pointer;">
+                            Start Scan
+                        </button>
+                    </form>
+                    {{ end }}
+                </td>
+            </tr>
+            {{ end }}
+        </tbody>
+    </table>
+    {{ else }}
+    <p style="color: #94a3b8;">No crawls synchronized yet. Click "Sync Catalog" to discover available crawls.</p>
+    {{ end }}
+</div>

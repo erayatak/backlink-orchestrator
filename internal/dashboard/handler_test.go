@@ -59,7 +59,7 @@ func setupTestApp(t *testing.T, db *database.DB) (*httptest.Server, *http.Cookie
 		AdminPassword: "password",
 	}
 
-	dashHandler := dashboard.NewHandler(db, cfg)
+	dashHandler := dashboard.NewHandler(db, cfg, nil)
 
 	mux := http.NewServeMux()
 	authMux := http.NewServeMux()

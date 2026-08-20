@@ -27,13 +27,17 @@ type Task struct {
 	AssignedWorkerID *string
 	CurrentAttempt   int
 	LeaseUntil       *time.Time
+	CrawlID          string
+	PipelineVersion  string
 }
 
 type ClaimResult struct {
-	TaskID     string
-	Dataset    string
-	SourcePath string
-	LeaseUntil time.Time
+	TaskID          string
+	Dataset         string
+	SourcePath      string
+	CrawlID         string
+	PipelineVersion string
+	LeaseUntil      time.Time
 }
 
 var ErrNoTasksAvailable = errors.New("no tasks available")
@@ -49,13 +53,14 @@ func (r *Repository) ClaimTask(ctx context.Context, workerID string, leaseDurati
 	// Find an available task using SKIP LOCKED
 	var task Task
 	err = tx.QueryRowContext(ctx, `
-		SELECT id, task_id, job_id, dataset, source_path, current_attempt 
-		FROM tasks 
-		WHERE status = 'QUEUED' 
-		ORDER BY created_at ASC 
+		SELECT t.id, t.task_id, t.job_id, t.dataset, t.source_path, t.current_attempt, j.crawl_id, j.pipeline_version
+		FROM tasks t
+		JOIN jobs j ON t.job_id = j.id
+		WHERE t.status = 'QUEUED' 
+		ORDER BY t.created_at ASC 
 		FOR UPDATE SKIP LOCKED 
 		LIMIT 1
-	`).Scan(&task.ID, &task.TaskID, &task.JobID, &task.Dataset, &task.SourcePath, &task.CurrentAttempt)
+	`).Scan(&task.ID, &task.TaskID, &task.JobID, &task.Dataset, &task.SourcePath, &task.CurrentAttempt, &task.CrawlID, &task.PipelineVersion)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -101,10 +106,12 @@ func (r *Repository) ClaimTask(ctx context.Context, workerID string, leaseDurati
 	}
 
 	return &ClaimResult{
-		TaskID:     task.TaskID,
-		Dataset:    task.Dataset,
-		SourcePath: task.SourcePath,
-		LeaseUntil: leaseUntil,
+		TaskID:          task.TaskID,
+		Dataset:         task.Dataset,
+		SourcePath:      task.SourcePath,
+		CrawlID:         task.CrawlID,
+		PipelineVersion: task.PipelineVersion,
+		LeaseUntil:      leaseUntil,
 	}, nil
 }
 

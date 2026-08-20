@@ -31,8 +31,7 @@ func setupTestServer(t *testing.T) (*httptest.Server, *database.DB) {
 	workerRepo := workers.NewRepository(db)
 	workerHandler := httpapi.NewWorkerHandler(workerRepo, cfg)
 
-	taskRepo := tasks.NewRepository(db)
-	taskHandler := httpapi.NewTaskHandler(taskRepo, cfg)
+	taskHandler := httpapi.NewTaskHandler(tasks.NewRepository(db), cfg, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/workers/register", workerHandler.Register)

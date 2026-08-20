@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"github.com/backlink-orchestrator/internal/auth"
+	"github.com/backlink-orchestrator/internal/commoncrawl"
 	"github.com/backlink-orchestrator/internal/config"
 	"github.com/backlink-orchestrator/internal/dashboard"
 	"github.com/backlink-orchestrator/internal/database"
 	"github.com/backlink-orchestrator/internal/httpapi"
 	"github.com/backlink-orchestrator/internal/jobs"
 	"github.com/backlink-orchestrator/internal/metrics"
+	"github.com/backlink-orchestrator/internal/r2"
 	"github.com/backlink-orchestrator/internal/recovery"
 	"github.com/backlink-orchestrator/internal/tasks"
 	"github.com/backlink-orchestrator/internal/workers"
@@ -134,12 +136,6 @@ func runServer() {
 	cfg := config.Load()
 	logger := config.SetupLogger(cfg.LogLevel)
 
-	logger.Info("Starting Backlink Orchestrator",
-		"env", cfg.AppEnv,
-		"port", cfg.AppPort,
-		"version", "1.0.0",
-	)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -150,6 +146,17 @@ func runServer() {
 	}
 	defer db.Close()
 
+	recoverySvc := recovery.NewService(db, cfg)
+
+	finalizer := jobs.NewFinalizer(db)
+	go finalizer.Start(context.Background())
+
+	logger.Info("Starting Backlink Orchestrator",
+		"env", cfg.AppEnv,
+		"port", cfg.AppPort,
+		"version", "1.0.0",
+	)
+
 	// Optionally keep migrate here as well for automatic migration, or remove it so users MUST use CLI.
 	// We'll keep it for local dev convenience, but in prod install script we will call `orchestrator migrate` first anyway.
 	if err := db.Migrate(ctx, migrations.FS); err != nil {
@@ -157,16 +164,23 @@ func runServer() {
 		os.Exit(1)
 	}
 
+	r2Client, err := r2.NewClient(context.Background(), cfg)
+	if err != nil {
+		logger.Warn("R2 Client initialization failed (presigning disabled)", "error", err.Error())
+	}
+
 	workerRepo := workers.NewRepository(db)
-	workerHandler := httpapi.NewWorkerHandler(workerRepo, cfg)
-
-	taskRepo := tasks.NewRepository(db)
-	taskHandler := httpapi.NewTaskHandler(taskRepo, cfg)
-
 	jobRepo := jobs.NewRepository(db)
-	adminHandler := httpapi.NewAdminHandler(jobRepo)
+	taskRepo := tasks.NewRepository(db)
+	ccRepo := commoncrawl.NewRepository(db.DB)
 
-	recoverySvc := recovery.NewService(db, cfg)
+	ccClient := commoncrawl.NewClient()
+	ccSyncer := commoncrawl.NewSyncer(ccClient, ccRepo)
+	go ccSyncer.Start(context.Background(), 6*time.Hour)
+
+	workerHandler := httpapi.NewWorkerHandler(workerRepo, cfg)
+	taskHandler := httpapi.NewTaskHandler(taskRepo, cfg, r2Client)
+	adminHandler := httpapi.NewAdminHandler(jobRepo, ccRepo)
 
 	logger.Info("Running initial recovery scan...")
 	recoverySvc.RunScanOnce(context.Background())
@@ -192,7 +206,7 @@ func runServer() {
 	})
 	mux.HandleFunc("GET /metrics", promhttp.Handler().ServeHTTP)
 
-	dashHandler := dashboard.NewHandler(db, cfg)
+	dashHandler := dashboard.NewHandler(db, cfg, ccRepo)
 	mux.HandleFunc("GET /login", dashHandler.LoginGet)
 	mux.HandleFunc("POST /login", dashHandler.LoginPost)
 	mux.HandleFunc("POST /logout", dashHandler.LogoutPost)
@@ -207,6 +221,9 @@ func runServer() {
 	authMux.HandleFunc("GET /tasks/list/data", dashHandler.TasksData)
 	authMux.HandleFunc("GET /jobs", dashHandler.Jobs)
 	authMux.HandleFunc("GET /jobs/list/data", dashHandler.JobsData)
+	authMux.HandleFunc("GET /crawls", dashHandler.Crawls)
+	authMux.HandleFunc("GET /crawls/list/data", dashHandler.CrawlsData)
+	authMux.HandleFunc("POST /crawls/sync", dashHandler.SyncCrawls)
 
 	mux.Handle("/", metrics.Middleware(dashHandler.AuthMiddleware(authMux)))
 
@@ -218,10 +235,12 @@ func runServer() {
 	mux.Handle("POST /api/v1/tasks/{task_id}/heartbeat", workerAuth(http.HandlerFunc(taskHandler.Heartbeat)))
 	mux.Handle("POST /api/v1/tasks/{task_id}/complete", workerAuth(http.HandlerFunc(taskHandler.Complete)))
 	mux.Handle("POST /api/v1/tasks/{task_id}/fail", workerAuth(http.HandlerFunc(taskHandler.Fail)))
+	mux.Handle("POST /api/v1/tasks/{task_id}/artifact-upload", workerAuth(http.HandlerFunc(taskHandler.GetArtifactUploadURL)))
 
 	mux.Handle("POST /api/v1/admin/jobs/{job_id}/pause", dashHandler.AuthMiddleware(http.HandlerFunc(adminHandler.PauseJob)))
 	mux.Handle("POST /api/v1/admin/jobs/{job_id}/resume", dashHandler.AuthMiddleware(http.HandlerFunc(adminHandler.ResumeJob)))
 	mux.Handle("POST /api/v1/admin/jobs/{job_id}/cancel", dashHandler.AuthMiddleware(http.HandlerFunc(adminHandler.CancelJob)))
+	mux.Handle("POST /api/v1/admin/crawls/{crawl_id}/scan", dashHandler.AuthMiddleware(http.HandlerFunc(adminHandler.StartScan)))
 
 	serverAddr := ":" + cfg.AppPort
 	srv := &http.Server{

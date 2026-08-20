@@ -65,6 +65,56 @@ func (r *Repository) CreateJob(ctx context.Context, job JobCreate) error {
 	return tx.Commit()
 }
 
+func (r *Repository) CreateCommonCrawlJob(ctx context.Context, crawlID string, pipelineVersion string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	jobID := fmt.Sprintf("cc-%s-%s", crawlID, pipelineVersion)
+
+	var internalJobID string
+	err = tx.QueryRowContext(ctx, `
+		INSERT INTO jobs (job_id, dataset, crawl_id, pipeline_version, status, total_tasks, queued_tasks)
+		SELECT $1, 'COMMON_CRAWL', $2, $3, 'QUEUING', count(*), 0
+		FROM crawl_files WHERE crawl_id = $2
+		RETURNING id
+	`, jobID, crawlID, pipelineVersion).Scan(&internalJobID)
+
+	if err != nil {
+		return fmt.Errorf("failed to insert job (duplicate or db error): %w", err)
+	}
+
+	// Insert tasks from crawl_files atomically
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO tasks (task_id, job_id, dataset, source_path, status)
+		SELECT 
+			$1 || '-task-' || row_number() over(),
+			$2,
+			'COMMON_CRAWL',
+			path,
+			'QUEUED'
+		FROM crawl_files WHERE crawl_id = $3
+	`, jobID, internalJobID, crawlID)
+
+	if err != nil {
+		return fmt.Errorf("failed to batch insert tasks: %w", err)
+	}
+
+	// Update job state to QUEUED and set exact task counts
+	_, err = tx.ExecContext(ctx, `
+		UPDATE jobs 
+		SET status = 'QUEUED', queued_tasks = total_tasks
+		WHERE id = $1
+	`, internalJobID)
+	if err != nil {
+		return fmt.Errorf("failed to transition job to QUEUED: %w", err)
+	}
+
+	return tx.Commit()
+}
+
 // UpdateJobStatus allows admins to pause, resume, or cancel jobs.
 func (r *Repository) UpdateJobStatus(ctx context.Context, jobID string, status string) error {
 	_, err := r.db.ExecContext(ctx, "UPDATE jobs SET status = $1, updated_at = NOW() WHERE job_id = $2", status, jobID)
@@ -89,19 +139,14 @@ func (r *Repository) UpdateJobProgress(ctx context.Context, internalJobID string
 		return err
 	}
 
-	// If all tasks are completed or failed, update job status
+	// If all tasks are completed or failed, update job status to FINALIZING
 	_, err = r.db.ExecContext(ctx, `
 		UPDATE jobs
 		SET status = CASE 
-				WHEN succeeded_tasks = total_tasks THEN 'COMPLETED'
-				WHEN (succeeded_tasks + failed_tasks) = total_tasks THEN 'FAILED'
+				WHEN (succeeded_tasks + failed_tasks) = total_tasks AND total_tasks > 0 THEN 'FINALIZING'
 				ELSE status
-			END,
-			finished_at = CASE
-				WHEN (succeeded_tasks + failed_tasks) = total_tasks THEN NOW()
-				ELSE NULL
 			END
-		WHERE id = $1 AND status NOT IN ('COMPLETED', 'FAILED', 'CANCELLED')
+		WHERE id = $1 AND status NOT IN ('FINALIZING', 'COMPLETED', 'FAILED', 'PARTIAL', 'CANCELLED')
 	`, internalJobID)
 
 	return err

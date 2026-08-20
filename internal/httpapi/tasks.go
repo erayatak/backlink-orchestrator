@@ -2,21 +2,24 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/backlink-orchestrator/internal/config"
+	"github.com/backlink-orchestrator/internal/r2"
 	"github.com/backlink-orchestrator/internal/tasks"
 )
 
 type TaskHandler struct {
-	repo *tasks.Repository
-	cfg  *config.Config
+	repo     *tasks.Repository
+	cfg      *config.Config
+	r2Client *r2.Client
 }
 
-func NewTaskHandler(repo *tasks.Repository, cfg *config.Config) *TaskHandler {
-	return &TaskHandler{repo: repo, cfg: cfg}
+func NewTaskHandler(repo *tasks.Repository, cfg *config.Config, r2Client *r2.Client) *TaskHandler {
+	return &TaskHandler{repo: repo, cfg: cfg, r2Client: r2Client}
 }
 
 type ClaimRequest struct {
@@ -28,13 +31,13 @@ type ClaimRequest struct {
 }
 
 type ClaimResponse struct {
-	TaskID     string `json:"task_id"`
-	LeaseUntil string `json:"lease_until"`
-	Type       string `json:"type"`
-	Source     struct {
-		Dataset string `json:"dataset"`
-		Path    string `json:"path"`
-	} `json:"source"`
+	TaskID          string `json:"task_id"`
+	LeaseUntil      string `json:"lease_until"`
+	Type            string `json:"type"`
+	CrawlID         string `json:"crawl_id"`
+	PipelineVersion string `json:"pipeline_version"`
+	WatPath         string `json:"wat_path"`
+	InputURL        string `json:"input_url"`
 }
 
 func (h *TaskHandler) Claim(w http.ResponseWriter, r *http.Request) {
@@ -64,12 +67,14 @@ func (h *TaskHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := ClaimResponse{
-		TaskID:     res.TaskID,
-		LeaseUntil: res.LeaseUntil.UTC().Format(time.RFC3339),
-		Type:       "COMMON_CRAWL_WAT",
+		TaskID:          res.TaskID,
+		LeaseUntil:      res.LeaseUntil.UTC().Format(time.RFC3339),
+		Type:            "COMMON_CRAWL_WAT",
+		CrawlID:         res.CrawlID,
+		PipelineVersion: res.PipelineVersion,
+		WatPath:         res.SourcePath,
+		InputURL:        "https://data.commoncrawl.org/" + res.SourcePath,
 	}
-	resp.Source.Dataset = res.Dataset
-	resp.Source.Path = res.SourcePath
 
 	WriteJSON(w, http.StatusOK, resp)
 }
@@ -122,6 +127,14 @@ func (h *TaskHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Before completing, verify artifact exists in R2
+	_, err := h.r2Client.VerifyObjectExists(ctx, req.OutputURI)
+	if err != nil {
+		slog.Error("Failed to verify artifact in R2", "error", err.Error(), "key", req.OutputURI)
+		WriteError(w, http.StatusBadGateway, "VERIFICATION_FAILED", "Could not verify artifact in object storage", "")
+		return
+	}
+
 	data := tasks.CompleteData{
 		TaskID:           taskID,
 		WorkerID:         workerID,
@@ -140,6 +153,47 @@ func (h *TaskHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
+}
+
+type ArtifactUploadRequest struct {
+	CrawlID         string `json:"crawl_id"`
+	PipelineVersion string `json:"pipeline_version"`
+}
+
+type ArtifactUploadResponse struct {
+	UploadURL string `json:"upload_url"`
+	ObjectKey string `json:"object_key"`
+}
+
+func (h *TaskHandler) GetArtifactUploadURL(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	taskID := r.PathValue("task_id")
+
+	var req ArtifactUploadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON payload", "")
+		return
+	}
+
+	if req.CrawlID == "" || req.PipelineVersion == "" {
+		WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", "crawl_id and pipeline_version are required", "")
+		return
+	}
+
+	objectKey := fmt.Sprintf("staging/backlinks/crawl=%s/pipeline=%s/task=%s.parquet", req.CrawlID, req.PipelineVersion, taskID)
+
+	// Valid for 2 hours
+	uploadURL, err := h.r2Client.GeneratePresignedPutURL(ctx, objectKey, 2*time.Hour)
+	if err != nil {
+		slog.Error("Failed to generate presigned url", "error", err.Error(), "task_id", taskID)
+		WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate upload url", "")
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, ArtifactUploadResponse{
+		UploadURL: uploadURL,
+		ObjectKey: objectKey,
+	})
 }
 
 type FailRequest struct {

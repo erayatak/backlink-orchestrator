@@ -5,9 +5,11 @@ import (
 	"html/template"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/backlink-orchestrator/internal/auth"
+	"github.com/backlink-orchestrator/internal/commoncrawl"
 	"github.com/backlink-orchestrator/internal/config"
 	"github.com/backlink-orchestrator/internal/database"
 )
@@ -17,22 +19,42 @@ type Handler struct {
 	cfg       *config.Config
 	tmpl      *template.Template
 	adminAuth *auth.AdminAuth
+	ccRepo    *commoncrawl.Repository
 }
 
-func NewHandler(db *database.DB, cfg *config.Config) *Handler {
-	funcs := template.FuncMap{
-		"Percent": func(part, total int) float64 {
+func NewHandler(db *database.DB, cfg *config.Config, ccRepo *commoncrawl.Repository) *Handler {
+	templates := []string{
+		"layout.html",
+		"login.html",
+		"workers.html",
+		"tasks.html",
+		"overview.html",
+		"crawls.html",
+	}
+
+	for i, t := range templates {
+		templates[i] = "web/templates/" + t
+	}
+
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"percentage": func(val, total int) float64 {
 			if total == 0 {
 				return 0
 			}
-			return float64(part) / float64(total) * 100
+			return float64(val) / float64(total) * 100
 		},
+		"formatNumber": func(n int) string {
+			return strconv.Itoa(n)
+		},
+	}).ParseFiles(templates...))
+
+	return &Handler{
+		db:        db,
+		cfg:       cfg,
+		tmpl:      tmpl,
+		adminAuth: auth.NewAdminAuth(db),
+		ccRepo:    ccRepo,
 	}
-
-	t := template.Must(template.New("layout").Funcs(funcs).ParseGlob("web/templates/*.html"))
-	adminAuth := auth.NewAdminAuth(db)
-
-	return &Handler{db: db, cfg: cfg, tmpl: t, adminAuth: adminAuth}
 }
 
 // AuthMiddleware requires a valid session cookie
@@ -340,4 +362,43 @@ func (h *Handler) JobsData(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.tmpl.ExecuteTemplate(w, "jobs.html", map[string]interface{}{"Jobs": jobs})
+}
+
+func (h *Handler) Crawls(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") == "true" {
+		h.CrawlsData(w, r)
+		return
+	}
+	h.tmpl.ExecuteTemplate(w, "layout.html", "/crawls")
+}
+
+func (h *Handler) CrawlsData(w http.ResponseWriter, r *http.Request) {
+	entries, err := h.ccRepo.GetArchives(r.Context())
+	if err != nil {
+		slog.Error("Failed to fetch crawls", "error", err.Error())
+		http.Error(w, "Internal server error fetching crawls", http.StatusInternalServerError)
+		return
+	}
+
+	// We also want to enrich this with WAT path count
+	type EnrichedEntry struct {
+		commoncrawl.CatalogEntry
+		HasWATPaths bool
+	}
+
+	var result []EnrichedEntry
+	for _, entry := range entries {
+		hasPaths, _ := h.ccRepo.HasWATPaths(r.Context(), entry.ID)
+		result = append(result, EnrichedEntry{
+			CatalogEntry: entry,
+			HasWATPaths:  hasPaths,
+		})
+	}
+
+	h.tmpl.ExecuteTemplate(w, "crawls.html", map[string]interface{}{"Crawls": result})
+}
+
+func (h *Handler) SyncCrawls(w http.ResponseWriter, r *http.Request) {
+	// Syncing is backgrounded, but we can return success instantly
+	w.WriteHeader(http.StatusOK)
 }
