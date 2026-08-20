@@ -117,6 +117,10 @@ func (h *Handler) LogoutPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("HX-Request") == "true" {
+		h.Stats(w, r)
+		return
+	}
 	h.tmpl.ExecuteTemplate(w, "layout.html", "/overview")
 }
 

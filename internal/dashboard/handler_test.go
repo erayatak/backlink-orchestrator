@@ -64,6 +64,7 @@ func setupTestApp(t *testing.T, db *database.DB) (*httptest.Server, *http.Cookie
 	mux := http.NewServeMux()
 	authMux := http.NewServeMux()
 
+	authMux.HandleFunc("GET /overview", dashHandler.Index)
 	authMux.HandleFunc("GET /workers", dashHandler.Workers)
 	authMux.HandleFunc("GET /workers/list/data", dashHandler.WorkersData)
 
@@ -108,8 +109,33 @@ func TestDashboardWorkers(t *testing.T) {
 		return resp, string(body)
 	}
 
+	makeHTMXReq := func(url string) (*http.Response, string) {
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Header.Set("HX-Request", "true")
+		req.AddCookie(cookie)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("request failed: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		return resp, string(body)
+	}
+
+	// 0. Test Overview HTMX Request (Must not contain <html>)
+	resp, body := makeHTMXReq(srv.URL + "/overview")
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200, got %d", resp.StatusCode)
+	}
+	if strings.Contains(body, "<html") {
+		t.Errorf("HTMX request to /overview should not return full HTML layout. Body: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/api/dashboard/stats"`) {
+		t.Errorf("expected stats fragment, got: %s", body)
+	}
+
 	// 1. Empty workers table should render correctly
-	resp, body := makeReq(srv.URL + "/workers/list/data")
+	resp, body = makeReq(srv.URL + "/workers/list/data")
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected 200, got %d", resp.StatusCode)
 	}
