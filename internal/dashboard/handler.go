@@ -378,26 +378,72 @@ func (h *Handler) Crawls(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CrawlsData(w http.ResponseWriter, r *http.Request) {
-	entries, err := h.ccRepo.GetArchives(r.Context())
+	rows, err := h.db.QueryContext(r.Context(), `
+		SELECT 
+			ca.crawl_id,
+			ca.display_name,
+			ca.status as archive_status,
+			(SELECT count(*) FROM crawl_files WHERE crawl_id = ca.crawl_id) as total_files,
+			(SELECT count(*) FROM crawl_files WHERE crawl_id = ca.crawl_id AND status = 'PENDING') as pending_files,
+			COALESCE(j.status, 'NOT_STARTED') as job_status,
+			COALESCE(j.queued_tasks, 0) as queued_tasks,
+			COALESCE(j.running_tasks, 0) as running_tasks,
+			COALESCE(j.succeeded_tasks, 0) as succeeded_tasks,
+			COALESCE(j.failed_tasks, 0) as failed_tasks
+		FROM crawl_archives ca
+		LEFT JOIN jobs j ON j.crawl_id = ca.crawl_id AND j.pipeline_version = 'backlink-v1'
+		ORDER BY ca.from_date DESC
+	`)
 	if err != nil {
 		slog.Error("Failed to fetch crawls", "error", err.Error())
 		http.Error(w, "Internal server error fetching crawls", http.StatusInternalServerError)
 		return
 	}
+	defer rows.Close()
 
-	// We also want to enrich this with WAT path count
 	type EnrichedEntry struct {
-		commoncrawl.CatalogEntry
-		HasWATPaths bool
+		ID             string
+		Name           string
+		ArchiveStatus  string
+		TotalFiles     int
+		PendingFiles   int
+		JobStatus      string
+		QueuedTasks    int
+		RunningTasks   int
+		SucceededTasks int
+		FailedTasks    int
+		CompletedPct   float64
+		HasWATPaths    bool
 	}
 
 	var result []EnrichedEntry
-	for _, entry := range entries {
-		hasPaths, _ := h.ccRepo.HasWATPaths(r.Context(), entry.ID)
-		result = append(result, EnrichedEntry{
-			CatalogEntry: entry,
-			HasWATPaths:  hasPaths,
-		})
+	for rows.Next() {
+		var e EnrichedEntry
+		if err := rows.Scan(
+			&e.ID,
+			&e.Name,
+			&e.ArchiveStatus,
+			&e.TotalFiles,
+			&e.PendingFiles,
+			&e.JobStatus,
+			&e.QueuedTasks,
+			&e.RunningTasks,
+			&e.SucceededTasks,
+			&e.FailedTasks,
+		); err != nil {
+			slog.Error("Failed to scan crawl row", "error", err.Error())
+			http.Error(w, "Internal server error reading crawls", http.StatusInternalServerError)
+			return
+		}
+
+		totalTasksProcessed := e.QueuedTasks + e.RunningTasks + e.SucceededTasks + e.FailedTasks
+		if totalTasksProcessed > 0 {
+			e.CompletedPct = float64(e.SucceededTasks+e.FailedTasks) / float64(totalTasksProcessed) * 100
+		}
+		
+		e.HasWATPaths = e.TotalFiles > 0
+
+		result = append(result, e)
 	}
 
 	h.tmpl.ExecuteTemplate(w, "crawls.html", map[string]interface{}{"Crawls": result})

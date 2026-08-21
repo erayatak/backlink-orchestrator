@@ -23,7 +23,7 @@
                 </td>
                 <td>
                     <div style="background: #334155; border-radius: 9999px; width: 100%; height: 8px; margin-bottom: 4px; overflow: hidden;">
-                        <div style="background: #4ade80; height: 100%; width: {{ if gt .TotalTasks 0 }}{{ printf "%.0f" (call $.Percent .SucceededTasks .TotalTasks) }}{{ else }}0{{ end }}%;"></div>
+                        <div style="background: #4ade80; height: 100%; width: {{ if gt .TotalTasks 0 }}{{ printf "%.0f" (percentage .SucceededTasks .TotalTasks) }}{{ else }}0{{ end }}%;"></div>
                     </div>
                     <small>{{ .SucceededTasks }} / {{ .TotalTasks }}</small>
                 </td>
