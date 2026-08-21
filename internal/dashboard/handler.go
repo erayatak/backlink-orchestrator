@@ -320,7 +320,14 @@ func (h *Handler) Jobs(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) JobsData(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.QueryContext(r.Context(), `
-		SELECT job_id, dataset, crawl_id, status, total_tasks, succeeded_tasks, failed_tasks
+		SELECT 
+			COALESCE(job_id, ''), 
+			COALESCE(dataset, ''), 
+			COALESCE(crawl_id, ''), 
+			COALESCE(status, ''), 
+			COALESCE(total_tasks, 0), 
+			COALESCE(succeeded_tasks, 0), 
+			COALESCE(failed_tasks, 0)
 		FROM jobs ORDER BY created_at DESC LIMIT 50
 	`)
 	if err != nil {
@@ -354,8 +361,8 @@ func (h *Handler) JobsData(w http.ResponseWriter, r *http.Request) {
 		)
 		if err != nil {
 			slog.Error("Failed to scan job row", "error", err.Error())
-			http.Error(w, "Internal server error scanning job row", http.StatusInternalServerError)
-			return
+			// Ignore this broken row instead of crashing the whole page
+			continue
 		}
 		jobs = append(jobs, j)
 	}
