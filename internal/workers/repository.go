@@ -109,7 +109,9 @@ func (r *Repository) RecordHeartbeat(ctx context.Context, data HeartbeatData) er
 	// Update worker
 	_, err = tx.ExecContext(ctx, `
 		UPDATE workers 
-		SET status = $1, current_task_id = $2, last_heartbeat_at = NOW()
+		SET status = $1, 
+		    current_task_id = (SELECT id FROM tasks WHERE task_id = $2), 
+		    last_heartbeat_at = NOW()
 		WHERE worker_id = $3
 	`, data.Status, data.CurrentTaskID, data.WorkerID)
 	if err != nil {
@@ -120,7 +122,7 @@ func (r *Repository) RecordHeartbeat(ctx context.Context, data HeartbeatData) er
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO worker_heartbeat_history 
 		(worker_id, status, cpu_percent, memory_percent, current_task_id, processed_records, processed_links)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, (SELECT id FROM tasks WHERE task_id = $5), $6, $7)
 	`, data.WorkerID, data.Status, data.CPUPercent, data.MemoryPercent, data.CurrentTaskID, data.ProcessedRecords, data.ProcessedLinks)
 	if err != nil {
 		return err
