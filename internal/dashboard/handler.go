@@ -243,7 +243,11 @@ func (h *Handler) WorkersData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.tmpl.ExecuteTemplate(w, "workers.html", map[string]interface{}{"Workers": workers})
+	isPolling := r.URL.Path == "/workers/list/data"
+	h.tmpl.ExecuteTemplate(w, "workers.html", map[string]interface{}{
+		"Workers": workers,
+		"IsPolling": isPolling,
+	})
 }
 
 func (h *Handler) Tasks(w http.ResponseWriter, r *http.Request) {
@@ -401,4 +405,50 @@ func (h *Handler) CrawlsData(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) SyncCrawls(w http.ResponseWriter, r *http.Request) {
 	// Syncing is backgrounded, but we can return success instantly
 	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) WorkerInstallCommand(w http.ResponseWriter, r *http.Request) {
+	token, err := auth.GenerateToken(32)
+	if err != nil {
+		slog.Error("Failed to generate bootstrap token for UI", "error", err)
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	tokenHash := auth.HashToken(token)
+	expiresAt := time.Now().Add(1 * time.Hour)
+	
+	_, err = h.db.ExecContext(r.Context(), `
+		INSERT INTO bootstrap_tokens (token_hash, expires_at, created_by, status)
+		VALUES ($1, $2, $3, 'ACTIVE')
+	`, tokenHash, expiresAt, "dashboard_ui")
+	
+	if err != nil {
+		slog.Error("Failed to insert bootstrap token for UI", "error", err)
+		http.Error(w, "Failed to save token", http.StatusInternalServerError)
+		return
+	}
+
+	masterURL := h.cfg.PublicBaseURL
+	if masterURL == "" {
+		masterURL = "https://backlink.seonius.com"
+	}
+
+	cmd := fmt.Sprintf(`curl -sL https://raw.githubusercontent.com/erayatak/backlink-worker/main/deploy/worker-bootstrap.sh | sudo bash -s -- --master "%s" --bootstrap-token "%s"`, masterURL, token)
+
+	html := fmt.Sprintf(`
+		<div style="background: #1e293b; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #334155;">
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+				<h3 style="margin: 0; color: #38bdf8; font-size: 1.1em;">🚀 1-Click Worker Installation</h3>
+				<button hx-get="/workers/install-command" hx-target="#install-cmd-wrapper" class="btn btn-sm" style="background: #334155; border: none; color: white; cursor: pointer; padding: 5px 10px; border-radius: 4px;">🔄 Generate New</button>
+			</div>
+			<p style="margin-top: 0; color: #94a3b8; font-size: 0.9em;">Run this command on your new server. This code includes a unique, single-use secure token that expires in 1 hour.</p>
+			<div style="background: #0f172a; padding: 12px; border-radius: 6px; font-family: monospace; color: #a5b4fc; word-break: break-all; border: 1px solid #1e293b; user-select: all;">
+				%s
+			</div>
+		</div>
+	`, cmd)
+
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(html))
 }

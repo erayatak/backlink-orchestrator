@@ -217,6 +217,7 @@ func runServer() {
 	authMux.HandleFunc("GET /api/dashboard/stats", dashHandler.Stats)
 	authMux.HandleFunc("GET /workers", dashHandler.Workers)
 	authMux.HandleFunc("GET /workers/list/data", dashHandler.WorkersData)
+	authMux.HandleFunc("GET /workers/install-command", dashHandler.WorkerInstallCommand)
 	authMux.HandleFunc("GET /tasks", dashHandler.Tasks)
 	authMux.HandleFunc("GET /tasks/list/data", dashHandler.TasksData)
 	authMux.HandleFunc("GET /jobs", dashHandler.Jobs)
