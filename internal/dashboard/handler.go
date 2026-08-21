@@ -373,7 +373,14 @@ func (h *Handler) JobsData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.tmpl.ExecuteTemplate(w, "jobs.html", map[string]interface{}{"Jobs": jobs})
+	var buf bytes.Buffer
+	if err := h.tmpl.ExecuteTemplate(&buf, "jobs.html", map[string]interface{}{"Jobs": jobs}); err != nil {
+		slog.Error("Template execution failed", "error", err.Error())
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(fmt.Sprintf("Template error: %v", err)))
+		return
+	}
+	w.Write(buf.Bytes())
 }
 
 func (h *Handler) Crawls(w http.ResponseWriter, r *http.Request) {
