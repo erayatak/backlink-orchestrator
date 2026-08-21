@@ -392,7 +392,7 @@ func (h *Handler) CrawlsData(w http.ResponseWriter, r *http.Request) {
 			COALESCE(j.failed_tasks, 0) as failed_tasks
 		FROM crawl_archives ca
 		LEFT JOIN jobs j ON j.crawl_id = ca.crawl_id AND j.pipeline_version = 'backlink-v1'
-		ORDER BY ca.from_date DESC
+		ORDER BY ca.crawl_id DESC
 	`)
 	if err != nil {
 		slog.Error("Failed to fetch crawls", "error", err.Error())
