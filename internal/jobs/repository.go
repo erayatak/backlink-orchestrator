@@ -78,9 +78,9 @@ func (r *Repository) CreateCommonCrawlJob(ctx context.Context, crawlID string, p
 	err = tx.QueryRowContext(ctx, `
 		INSERT INTO jobs (job_id, dataset, crawl_id, pipeline_version, status, total_tasks, queued_tasks)
 		SELECT $1, 'COMMON_CRAWL', $2, $3, 'QUEUING', count(*), 0
-		FROM crawl_files WHERE crawl_id = $2
+		FROM crawl_files WHERE crawl_id = $4
 		RETURNING id
-	`, jobID, crawlID, pipelineVersion).Scan(&internalJobID)
+	`, jobID, crawlID, pipelineVersion, crawlID).Scan(&internalJobID)
 
 	if err != nil {
 		return fmt.Errorf("failed to insert job (duplicate or db error): %w", err)
